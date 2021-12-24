@@ -1,43 +1,33 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
+/* eslint-disable prettier/prettier */
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Task, TaskStatus } from './task.model';
-import { v4 as uuid } from 'uuid';
+import { TaskStatus } from './task-status.enum';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { GetTasksFilterDto } from './dto/get-tasks-filter.dto';
 import { text } from 'stream/consumers';
+import { TasksRepository } from './tasks.repository';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Task } from './task.entity';
+import { ConfigService } from '@nestjs/config';
 
 
 @Injectable()
 export class TasksService {
-    private tasks: Task[] = [];
+
+    constructor(
+        @InjectRepository(TasksRepository)
+        private tasksRepository: TasksRepository,
+        private configService: ConfigService
+    ) {}
 
 
-    getAllTasks() {
-        return this.tasks;
+    async getTasks(filterDto: GetTasksFilterDto): Promise<Task[]> {
+        return this.tasksRepository.getTasks(filterDto);
     }
 
-    getTasksWithFilters(filterDto: GetTasksFilterDto) : Task[] {
-        
-        const { status, search } = filterDto;
-        
-        let tasks = this.getAllTasks();
+    async getTaskById(id: string): Promise<Task> {
+        const found = await this.tasksRepository.findOne(id);
 
-        if(status) {
-            tasks = tasks.filter(task => task.status === status);
-        }        
-
-        if(search) {
-            tasks = tasks.filter(task => {
-                if(task.taskName.toLowerCase().includes(search) || task.sequenceNumber.toLocaleLowerCase().includes(search)) return true;
-                return false;
-            })
-        }
-
-        return tasks;
-    }
-
-    getTaskById(id: string): Task {
-        const found = this.tasks.find((task) => task.id === id);
-        
         if(!found) {
             throw new NotFoundException(`Task with ID "${id}" not found`);
         }
@@ -45,28 +35,18 @@ export class TasksService {
         return found;
     }
 
-    createTask(createTaskDto: CreateTaskDto): Task {
-        const { taskName, sequenceNumber } = createTaskDto;
-        
-        const task: Task = {
-            id: uuid(),
-            taskName,
-            sequenceNumber,
-            status: TaskStatus.IN_PROGRESSS,
-        };
-
-        this.tasks.push(task);
-        this.tasks.sort((firstTask: Task, secondTask: Task) => parseInt(firstTask.sequenceNumber) - parseInt(secondTask.sequenceNumber))
-        return task;
+    createTask(createTaskDto: CreateTaskDto): Promise<Task> {
+        return this.tasksRepository.createTask(createTaskDto);
     }
 
-    updateTaskStatus(id: string, status: TaskStatus): Task {
+    async updateTaskStatus(id: string, status: TaskStatus): Promise<Task> {
         const sgMail = require('@sendgrid/mail');
-        const API_KEY: string = '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';
-
-        const task = this.getTaskById(id);
+        const API_KEY = this.configService.get('sendgrid');
+        const task = await this.getTaskById(id);
 
         task.status = status;
+        await this.tasksRepository.save(task);
+
         sgMail.setApiKey(API_KEY);
         const message = {
             to: 'opro1801@gmail.com',
@@ -81,21 +61,23 @@ export class TasksService {
         return task;
     }
 
-    editTask(id: string, taskName: string, sequenceNumber: string): Task {
-        const task = this.getTaskById(id);
-        task.taskName = taskName;
-        task.sequenceNumber = sequenceNumber;
-        this.tasks.sort((firstTask: Task, secondTask: Task) => parseInt(firstTask.sequenceNumber) - parseInt(secondTask.sequenceNumber))
-        return task;
+    async editTask(id: string, taskName: string, sequenceNumber: string): Promise<Task> {
+            const task = await this.getTaskById(id);
+            task.taskName = taskName;
+            task.sequenceNumber = sequenceNumber;
+            await this.tasksRepository.save(task);
+            return task;
     }
 
-    deleteTask(id: string): boolean {
-        const found = this.getTaskById(id);
-        this.tasks = this.tasks.filter(task => task.id !== id);
-        return true;
+    deleteTask(id: string): Promise<void> {
+        return this.tasksRepository.deleteTask(id);
     }
 
-    resetTask(): void {
-        this.tasks = [];
+    resetTask(): Promise<void> {
+        return this.tasksRepository.resetTask();
     }
+
+    // resetTask(): void {
+    //     this.tasks = [];
+    // }
 }
